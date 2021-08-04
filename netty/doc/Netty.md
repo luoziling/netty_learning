@@ -515,4 +515,155 @@ public void fileCopy() throws IOException{
 
 
 - selector.select是阻塞还是非阻塞，允许注册channel么
+
+  是带超时的阻塞，半阻塞
+
 - 通过超时阻塞打断阻塞
+
+
+
+### NIODemo
+
+- 服务端同样开启监听，但是使用select进行半阻塞监听
+- 若有事件触发通过selector的selectionKeys进行事件遍历并进行处理
+- 处理过程中可将事件继续注册到selector中，在下一轮扫描时读到并执行
+- 客户端置为非阻塞向服务器发起连接，连接未完成时可进行其他操作
+
+```java
+    @Test
+    public void ServerTest() throws IOException {
+        // 服务端
+        // 开启serverSocketChannel
+        ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+
+        // 开启selector
+        Selector selector = Selector.open();
+        // serverSocketChannel 监听端口
+        serverSocketChannel.bind(new InetSocketAddress(6666));
+        // 置为非阻塞 阻塞状态无法注册事件
+        serverSocketChannel.configureBlocking(false);
+
+        // 注册到selector
+        serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+        while (true){
+            // 开启事件监听
+            if (selector.select(1000) == 0){
+                System.out.println("无事发生");
+                continue;
+            }
+
+            // 获取selectionKeys
+            Set<SelectionKey> selectionKeys = selector.selectedKeys();
+            Iterator<SelectionKey> iterator = selectionKeys.iterator();
+            // 流程：
+            // 1.客户端连接触发acceptable事件因此进入循环找到事件为连接并处理
+            // 2.结束这一轮循环，处理过程中将数据传输事件放到了selector中
+            // 3.下一轮循环监听到read事件进行数据读取并展示
+            while (iterator.hasNext()){
+                SelectionKey selectionKey = iterator.next();
+                // 根据事件做出对应操作
+                if (selectionKey.isAcceptable()){
+                    // 接收请求
+                    SocketChannel socketChannel = serverSocketChannel.accept();
+                    // 设定为非阻塞
+                    socketChannel.configureBlocking(false);
+                    // 继续注册到selectorChannel
+                    socketChannel.register(selector,SelectionKey.OP_READ,ByteBuffer.allocate(1024));
+                }
+                if (selectionKey.isReadable()){
+                    // 从key获取channel
+                    SocketChannel socketChannel = (SocketChannel) selectionKey.channel();
+                    // 从key获取之前注册的buffer
+                    ByteBuffer buffer = (ByteBuffer) selectionKey.attachment();
+                    socketChannel.read(buffer);
+                    System.out.println("from 客户端:" + new String(buffer.array()));
+
+                }
+
+                // 事件移除selectionKey
+                iterator.remove();
+            }
+
+        }
+
+    }
+
+    @Test
+    public void client() throws IOException {
+        // 连接到服务器
+        SocketChannel socketChannel = SocketChannel.open();
+        InetSocketAddress inetSocketAddress = new InetSocketAddress("127.0.0.1", 6666);
+        // 非阻塞模式
+        socketChannel.configureBlocking(false);
+        if (!socketChannel.connect(inetSocketAddress)){
+            while (!socketChannel.finishConnect()){
+                System.out.println("客户端完成连接前可做别的事");
+            }
+            // 完成连接后通过buffer向服务端发送数据
+            String str = "hello 服务器";
+            ByteBuffer byteBuffer = ByteBuffer.wrap(str.getBytes(StandardCharsets.UTF_8));
+            socketChannel.write(byteBuffer);
+        }
+        System.in.read();
+
+    }
+```
+
+### 方法整理
+
+#### SelectionKey
+
+> 表示 Selector 和网络通道的注册关系, 共四种:
+>
+> int OP_ACCEPT：有新的网络连接可以 accept，值为 16
+> int OP_CONNECT：代表连接已经建立，值为 8
+> int OP_READ：代表读操作，值为 1 
+> int OP_WRITE：代表写操作，值为 4
+> 源码中：
+> public static final int OP_READ = 1 << 0; 
+> public static final int OP_WRITE = 1 << 2;
+> public static final int OP_CONNECT = 1 << 3;
+> public static final int OP_ACCEPT = 1 << 4;
+>
+> public abstract class SelectionKey {
+>      public abstract Selector selector();//得到与之关联的 Selector 对象
+>  public abstract SelectableChannel channel();//得到与之关联的通道
+>  public final Object attachment();//得到与之关联的共享数据
+>  public abstract SelectionKey interestOps(int ops);//设置或改变监听事件
+>  public final boolean isAcceptable();//是否可以 accept
+>  public final boolean isReadable();//是否可以读
+>  public final boolean isWritable();//是否可以写
+> }
+
+- 将某个通道的某个事件注册到selector的keys集合中
+- 是selector以及channel的关联对象
+- 可判定selectionKey的绑定事件
+- 绑定事件可改变
+
+#### ServerSocketChannel 
+
+> public abstract class ServerSocketChannel    extends AbstractSelectableChannel    implements NetworkChannel{
+> public static ServerSocketChannel open()，得到一个 ServerSocketChannel 通道
+> public final ServerSocketChannel bind(SocketAddress local)，设置服务器端端口号
+> public final SelectableChannel configureBlocking(boolean block)，设置阻塞或非阻塞模式，取值 false 表示采用非阻塞模式
+> public SocketChannel accept()，接受一个连接，返回代表这个连接的通道对象
+> public final SelectionKey register(Selector sel, int ops)，注册一个选择器并设置监听事件
+> }
+
+- 监听客户端连接
+
+#### SocketChannel
+
+> public abstract class SocketChannel    extends AbstractSelectableChannel    implements ByteChannel, ScatteringByteChannel, GatheringByteChannel, NetworkChannel{
+> public static SocketChannel open();//得到一个 SocketChannel 通道
+> public final SelectableChannel configureBlocking(boolean block);//设置阻塞或非阻塞模式，取值 false 表示采用非阻塞模式
+> public boolean connect(SocketAddress remote);//连接服务器
+> public boolean finishConnect();//如果上面的方法连接失败，接下来就要通过该方法完成连接操作
+> public int write(ByteBuffer src);//往通道里写数据
+> public int read(ByteBuffer dst);//从通道里读数据
+> public final SelectionKey register(Selector sel, int ops, Object att);//注册一个选择器并设置监听事件，最后一个参数可以设置共享数据
+> public final void close();//关闭通道
+> }
+
+- 连接到服务器
+- 承担数据读写任务
