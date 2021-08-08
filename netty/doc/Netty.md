@@ -667,3 +667,260 @@ public void fileCopy() throws IOException{
 
 - 连接到服务器
 - 承担数据读写任务
+
+
+
+### NIO群聊
+
+> 编写一个 NIO 群聊系统，实现服务器端和客户端之间的数据简单通讯（非阻塞）
+> 实现多人群聊
+> 服务器端：可以监测用户上线，离线，并实现消息转发功能
+> 客户端：通过channel 可以无阻塞发送消息给其它所有用户，同时可以接受其它用户发送的消息(有服务器转发得到)
+> 目的：进一步理解NIO非阻塞网络编程机制
+
+- 通过JavaNIO+Server/Socket Channel，编写群聊demo
+
+  主要流程如下：
+
+  - 服务器端开启客户端accept事件监听等待客户端连接
+  - 客户端连到服务器端，并注册到selector中，开启子线程 等待读取从服务器端发来的消息
+  - 服务器端接到accept请求，注册新的等待读取客户端数据的事件到selector
+  - 客户端发送消息
+  - 服务器端收到消息，并进行转发（keys） 判断非当前key的channel
+  - 客户端接到消息解析输出
+
+- 踩坑
+
+  - 不能在finally中强制关闭客户端导致客户端离线
+  - 若消息长度过长怎么处理呢 腾讯的处理方案是 文字处理过长转为文件发送
+  - channel必须在注册之前置为非阻塞，selector是非阻塞
+  - 服务channel注册到selector 注意注册的事件类型，客户端才是CONNECT
+
+- 
+
+### NIO与零拷贝
+
+[参考](https://www.cnblogs.com/ericli-ericli/articles/12923420.html)
+
+> 零拷贝（zero-copy）是一种目前只有在使用 NIO 和 Epoll 传输时才可使用的特性。它使你可以快速高效地将数据从文件系统移动到网络接口，而不需要将其从内核空间复制到用户空间，其在像 FTP 或者HTTP 这样的协议中可以显著地提升性能。但是，并不是所有的操作系统都支持这一特性。特别地，它对于实现了数据加密或者压缩的文件系统是不可用的——只能传输文件的原始内容。反过来说，传输已被加密的文件则不是问题。
+
+- 零拷贝就是减少操作系统的状态切换(用户态与内核态/上下文切换)来带的性能消耗
+- 零拷贝减少系统内核缓冲区和用户进程缓冲区反复的IO拷贝操作
+
+**传统IO**
+
+![](https://imgconvert.csdnimg.cn/aHR0cHM6Ly91cGxvYWQtaW1hZ2VzLmppYW5zaHUuaW8vdXBsb2FkX2ltYWdlcy80MjM2NTUzLTE3NGI4ZDljYzYxMTllNjcucG5n?x-oss-process=image/format,png)
+
+**mmap技术**
+
+![](https://imgconvert.csdnimg.cn/aHR0cHM6Ly91cGxvYWQtaW1hZ2VzLmppYW5zaHUuaW8vdXBsb2FkX2ltYWdlcy80MjM2NTUzLWM1ZWEwMGI3OGUxYjkzZmQucG5n?x-oss-process=image/format,png)
+
+**sendFile最终版**
+
+![](https://imgconvert.csdnimg.cn/aHR0cHM6Ly91cGxvYWQtaW1hZ2VzLmppYW5zaHUuaW8vdXBsb2FkX2ltYWdlcy80MjM2NTUzLTAwYzNlNDc5MzZlY2VhMjUucG5n?x-oss-process=image/format,png)
+
+
+
+> mmap的优化点在于数据从硬盘拷到内核态的空间后不需要从内核态空间拷贝到用户态空间
+
+mmap和sendFile的区别
+
+- mmap 适合小数据量读写，sendFile 适合大文件传输。
+- mmap 需要 4 次上下文切换，3 次数据拷贝；sendFile 需要 3 次上下文切换，最少 2 次数据拷贝。
+- sendFile 可以利用 DMA 方式，减少 CPU 拷贝，mmap 则不能（必须从内核拷贝到 Socket 缓冲区）。
+
+> 所以，如果你需要优化网络传输的性能，或者文件读写的速度，请尽量使用零拷贝。它不仅能较少复制拷贝次数，还能较少上下文切换，缓存行污染。
+>
+>  kafka 在客户端和 broker 进行数据传输时，会使用 transferTo 和 transferFrom 方法，即对应 Linux 的 sendFile。
+>
+>  tomcat 内部在进行文件拷贝的时候，也会使用 transferto 方法。
+>
+> tomcat 在处理一下心跳保活时，也会调用该 sendFile 方法。
+
+- transferFrom/To就是零拷贝在Java中的命令实现?
+
+
+
+#### 小结
+
+[参考](https://zhuanlan.zhihu.com/p/78869158)
+
+- DMA的作用
+  - DMA直接让内存与磁盘上存储的数据交互而不需要CPU进行IO请求+中断的介入从而提高效率
+- Java NIO提供的内存映射 MappedByteBuffer
+  - 首先要说明的是，JavaNlO中 的Channel (通道)就相当于操作系统中的内核缓冲区，有可能是读缓冲区，也有可能是网络缓冲区，而Buffer就相当于操作系统中的用户缓冲区。
+- Java NIO提供的send file  transferTo()的实现方式就是通过系统调用sendfile() (当然这是Linux中的系统调用)
+- NIO与AIO的区别,在于同步与异步,同步指客户端自己去处理IO操作,异步指给出任务由操作系统进行IO操作
+
+
+
+## 6.Netty
+
+> 原生NIO存在的问题
+>
+> - NIO 的类库和 API 繁杂，使用麻烦：需要熟练掌握 Selector、ServerSocketChannel、SocketChannel、ByteBuffer 等。
+> - 需要具备其他的额外技能：要熟悉 Java 多线程编程，因为 NIO 编程涉及到 Reactor 模式，你必须对多线程和网络编程非常熟悉，才能编写出高质量的 NIO 程序。
+> - 开发工作量和难度都非常大：例如客户端面临断连重连、网络闪断、半包读写、失败缓存、网络拥塞和异常流的处理等等。
+> - JDK NIO 的 Bug：例如臭名昭著的 Epoll Bug，它会导致 Selector 空轮询，最终导致 CPU 100%。直到 JDK 1.7 版本该问题仍旧存在，没有被根本解决。
+
+- JavaNIO的问题
+  - 学习成本高,开发难度大
+  - epoll bug导致selector空轮询
+
+
+
+### 概述
+
+> Netty is *an asynchronous event-driven network application framework* for rapid development of maintainable high performance protocol servers & clients.
+>
+> Netty 是由 JBOSS 提供的一个 Java 开源框架。Netty 提供异步的、基于事件驱动的网络应用程序框架，用以快速开发高性能、高可靠性的网络 IO 程序
+>  Netty 可以帮助你快速、简单的开发出一个网络应用，相当于简化和流程化了 NIO 的开发过程
+> Netty 是目前最流行的 NIO 框架，Netty 在互联网领域、大数据分布式计算领域、游戏行业、通信行业等获得了广泛的应用，知名的 Elasticsearch 、Dubbo 框架内部都采用了 Netty。
+
+- netty是异步,基于事件驱动的网络应用框架,可以快速开发可维护的高性能协议服务器/客户端.
+  - 这里的异步指非阻塞
+  - 本质上，一个既是异步的又是事件驱动的系统会表现出一种特殊的、对我们来说极具价值的行为：它可以以任意的顺序响应在任意的时间点产生的事件。
+- 开源 流行 社区活跃 快速开发
+
+![netty架构图](https://netty.io/images/components.png)
+
+优势
+
+- 设计优雅
+
+  适用于各种传输类型的统一 API 阻塞和非阻塞 Socket；基于灵活且可扩展的事件模型，可以清晰地分离关注点；高度可定制的线程模型 - 单线程，一个或多个线程池.
+
+- 使用方便
+
+  使用方便：详细记录的 Javadoc，用户指南和示例；没有其他依赖项，JDK 5（Netty 3.x）或 6（Netty 4.x）就足够了。
+
+- 高性能\吞吐量更高
+
+  延迟更低；减少资源消耗；最小化不必要的内存复制
+
+- 安全
+
+  完整的 SSL/TLS 和 StartTLS 支持
+
+- 社区活跃,不断更新
+
+  社区活跃，版本迭代周期短，发现的 Bug 可以被及时修复，同时，更多的新功能会被加入
+
+
+
+
+
+### Reactor模式
+
+- 使用epoll+线程池解决阻塞+线程过多问题
+- serviceHandler类似dispatcherServlet
+- 通过serviceHandle进行输入处理,分发,线程接到请求后处理\
+- 单reactor 多线程
+  - 利用CPU多核能力
+  - reactor自身的并发问题
+- 主从Reactor多线程
+  - 解决reactor自身并发问题,reactor拆为主从
+  - 主reacotr处理accept事件
+  - 子reactor则处理具体数据读写事件,子reactor可以有多个
+- 
+
+
+
+
+
+#### 小结
+
+- 线程模型
+
+  - 传统IO服务模型
+    - 阻塞
+    - 一个请求一个线程处理
+  - REACTOR模型
+    - 单reactor单线程
+    - 单reactor多线程
+    - 主从reactor多线程
+
+- 传统IO模型的问题
+
+  ![image-20210808170332558](Netty.assets/image-20210808170332558.png)
+
+  - 随着并发上升,线程不断增加
+  - 阻塞,不管是accept操作还是read操作都会引发线程阻塞,无法充分利用线程,资源浪费
+
+- Reactor模式解决的痛点
+
+  - 基于IO复用模型,一个线程客户处理多个连接,只有触发事件后才给出对应响应,非阻塞(Selector,channel,buffer,零拷贝)
+  - 基于线程池,线程池来管理具体的工作线程,从而避免线程数无限制增长导致的OOM等资源问题
+
+- Reactor基本设计思路
+
+  - 支持多个输入同时进行
+  - 服务端接到后进行请求分发
+  - IO服用进行事件监听,从而支持高并发
+
+- Reactor的组成
+
+  - Reactor:分发器,类似dispatcher,进行IO事件的接收,具体事件处理的分发(前台,dispatcherServlet)
+  - Handlers:执行IO事件的实际处理(分发给具体任务处理线程处理后返回)
+
+- REACTOR模型
+
+  - 单reactor单线程
+
+    ![image-20210808171003854](Netty.assets/image-20210808171003854.png)
+
+    - 借助select进行事件分类,并进行不同的处理
+    - 连接事件则交给acceptor
+    - 具体的数据读写事件交给handler
+    - handler的流程:Read->业务处理->Send
+    - 分析
+      - 模型简单,没有多线程
+      - 性能问题,只是单线程无法利用CPU的多核多线程
+      - reactor+handler的单点故障
+
+  - 单reactor多线程
+
+    ![image-20210808171327481](Netty.assets/image-20210808171327481.png)
+
+    - reactor接到请求,根据不同事件转发
+    - 若是具体IO事件则分发给handler
+    - handler只是分发不做具体事件处理
+    - handler去worker线程池寻找具体worker进行事件处理
+    - worker处理完成后结果返回
+    - 分析
+      - 解决单线程导致的CPU性能无法利用问题
+      - 解决handler的单点问题
+      - reactor处理所有事件,单线程的reactor导致问题,包括高性能和可用性
+
+  - 主从reactor多线程
+
+    ![image-20210808171624613](Netty.assets/image-20210808171624613.png)
+
+    - 主从reactor将reactor分为主从,主reactor进行accpetor事件的监听,并且将连接分配给子reactor
+    - 子reactor将连接加入连接队列监听,并创建handler进行事件处理
+    - 具体事件到来
+      - subReactor寻找合适的handler
+      - handler读取数据寻找合适的worker进行处理,根handlerMapping和handlerAdapter类似
+      - worker线程池分配给具体worker处理
+      - worker业务处理并返回结果
+      - handler收到响应,send结果
+    - Reactor 主线程可以对应多个Reactor 子线程, 即MainRecator 可以关联多个SubReactor
+    - ![image-20210808171930715](Netty.assets/image-20210808171930715.png)
+    - 分析
+      - 父子reactor对请求类型进行解耦
+      - 解决单reactor引发的性能及可靠性问题
+      - 交互简单
+      - 变成复杂度高
+    - 结合实例：这种模型在许多项目中广泛使用，包括 Nginx 主从 Reactor 多进程模型，Memcached 主从多线程，Netty 主从多线程模型的支持
+
+  - 单 Reactor 单线程，前台接待员和服务员是同一个人，全程为顾客服
+    单 Reactor 多线程，1 个前台接待员，多个服务员，接待员只负责接待
+    主从 Reactor 多线程，多个前台接待员，多个服务生
+
+  - reactor的优势
+
+    - 响应快，不必为单个同步时间所阻塞，虽然 Reactor 本身依然是同步的
+    - 可以最大程度的避免复杂的多线程及同步问题，并且避免了多线程/进程的切换开销
+    - 扩展性好，可以方便的通过增加 Reactor 实例个数来充分利用 CPU 资源
+    - 复用性好，Reactor 模型本身与具体事件处理逻辑无关，具有很高的复用性
+
